@@ -9,8 +9,12 @@ import { checkForUpdates } from './updateCheck.js';
 import type { LoadedSettings } from '../../config/settings.js';
 
 const getPackageJson = vi.hoisted(() => vi.fn());
-vi.mock('../../utils/package.js', () => ({
+const debugLogger = vi.hoisted(() => ({
+  warn: vi.fn(),
+}));
+vi.mock('@google/gemini-cli-core', () => ({
   getPackageJson,
+  debugLogger,
 }));
 
 const latestVersion = vi.hoisted(() => vi.fn());
@@ -30,7 +34,7 @@ describe('checkForUpdates', () => {
     mockSettings = {
       merged: {
         general: {
-          disableUpdateNag: false,
+          enableAutoUpdateNotification: true,
         },
       },
     } as LoadedSettings;
@@ -41,8 +45,8 @@ describe('checkForUpdates', () => {
     vi.restoreAllMocks();
   });
 
-  it('should return null if disableUpdateNag is true', async () => {
-    mockSettings.merged.general!.disableUpdateNag = true;
+  it('should return null if enableAutoUpdateNotification is false', async () => {
+    mockSettings.merged.general.enableAutoUpdateNotification = false;
     const result = await checkForUpdates(mockSettings);
     expect(result).toBeNull();
     expect(getPackageJson).not.toHaveBeenCalled();

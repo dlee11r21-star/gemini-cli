@@ -78,14 +78,15 @@ export const useConfirmUpdateRequests = () => {
 };
 
 export const useExtensionUpdates = (
-  extensions: GeminiCLIExtension[],
   extensionManager: ExtensionManager,
   addItem: UseHistoryManagerReturn['addItem'],
+  enableExtensionReloading: boolean,
 ) => {
   const [extensionsUpdateState, dispatchExtensionStateUpdate] = useReducer(
     extensionUpdatesReducer,
     initialExtensionUpdatesState,
   );
+  const extensions = extensionManager.getExtensions();
 
   useEffect(() => {
     const extensionsToCheck = extensions.filter((extension) => {
@@ -97,6 +98,7 @@ export const useExtensionUpdates = (
       return !currentState || currentState === ExtensionUpdateState.UNKNOWN;
     });
     if (extensionsToCheck.length === 0) return;
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     checkForAllExtensionUpdates(
       extensionsToCheck,
       extensionManager,
@@ -131,10 +133,9 @@ export const useExtensionUpdates = (
       }
     }
 
-    let extensionsWithUpdatesCount = 0;
     // We only notify if we have unprocessed extensions in the UPDATE_AVAILABLE
     // state.
-    let shouldNotifyOfUpdates = false;
+    const pendingUpdates = [];
     const updatePromises: Array<Promise<ExtensionUpdateInfo | undefined>> = [];
     for (const extension of extensions) {
       const currentState = extensionsUpdateState.extensionStatuses.get(
@@ -148,14 +149,13 @@ export const useExtensionUpdates = (
       }
       const shouldUpdate = shouldDoUpdate(extension);
       if (!shouldUpdate) {
-        extensionsWithUpdatesCount++;
         if (!currentState.notified) {
           // Mark as processed immediately to avoid re-triggering.
           dispatchExtensionStateUpdate({
             type: 'SET_NOTIFIED',
             payload: { name: extension.name, notified: true },
           });
-          shouldNotifyOfUpdates = true;
+          pendingUpdates.push(extension.name);
         }
       } else {
         const updatePromise = updateExtension(
@@ -163,6 +163,7 @@ export const useExtensionUpdates = (
           extensionManager,
           currentState.status,
           dispatchExtensionStateUpdate,
+          enableExtensionReloading,
         );
         updatePromises.push(updatePromise);
         updatePromise
@@ -187,17 +188,18 @@ export const useExtensionUpdates = (
           });
       }
     }
-    if (shouldNotifyOfUpdates) {
-      const s = extensionsWithUpdatesCount > 1 ? 's' : '';
+    if (pendingUpdates.length > 0) {
+      const s = pendingUpdates.length > 1 ? 's' : '';
       addItem(
         {
           type: MessageType.INFO,
-          text: `You have ${extensionsWithUpdatesCount} extension${s} with an update available, run "/extensions list" for more information.`,
+          text: `You have ${pendingUpdates.length} extension${s} with an update available. Run "/extensions update ${pendingUpdates.join(' ')}".`,
         },
         Date.now(),
       );
     }
     if (scheduledUpdate) {
+      // eslint-disable-next-line @typescript-eslint/no-floating-promises
       Promise.all(updatePromises).then((results) => {
         const nonNullResults = results.filter((result) => result != null);
         scheduledUpdate.onCompleteCallbacks.forEach((callback) => {
@@ -209,7 +211,13 @@ export const useExtensionUpdates = (
         });
       });
     }
-  }, [extensions, extensionManager, extensionsUpdateState, addItem]);
+  }, [
+    extensions,
+    extensionManager,
+    extensionsUpdateState,
+    addItem,
+    enableExtensionReloading,
+  ]);
 
   const extensionsUpdateStateComputed = useMemo(() => {
     const result = new Map<string, ExtensionUpdateState>();

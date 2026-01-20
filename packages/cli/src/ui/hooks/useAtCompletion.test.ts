@@ -4,16 +4,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/** @vitest-environment jsdom */
-
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { act, useState } from 'react';
+import { renderHook } from '../../test-utils/render.js';
+import { waitFor } from '../../test-utils/async.js';
 import { useAtCompletion } from './useAtCompletion.js';
 import type { Config, FileSearch } from '@google/gemini-cli-core';
 import { FileSearchFactory } from '@google/gemini-cli-core';
 import type { FileSystemStructure } from '@google/gemini-cli-test-utils';
 import { createTmpDir, cleanupTmpDir } from '@google/gemini-cli-test-utils';
-import { useState } from 'react';
 import type { Suggestion } from '../components/SuggestionsDisplay.js';
 
 // Test harness to capture the state from the hook's callbacks.
@@ -49,7 +48,10 @@ describe('useAtCompletion', () => {
         respectGeminiIgnore: true,
       })),
       getEnableRecursiveFileSearch: () => true,
-      getFileFilteringDisableFuzzySearch: () => false,
+      getFileFilteringEnableFuzzySearch: () => true,
+      getResourceRegistry: vi.fn().mockReturnValue({
+        getAllResources: () => [],
+      }),
     } as unknown as Config;
     vi.clearAllMocks();
   });
@@ -77,9 +79,10 @@ describe('useAtCompletion', () => {
       );
 
       await waitFor(() => {
-        expect(result.current.suggestions.length).toBeGreaterThan(0);
+        expect(result.current.suggestions.length).toBeGreaterThan(5);
       });
 
+      expect(result.current.suggestions.length).toBeGreaterThan(0);
       expect(result.current.suggestions.map((s) => s.value)).toEqual([
         'src/',
         'src/components/',
@@ -150,7 +153,7 @@ describe('useAtCompletion', () => {
         cache: false,
         cacheTtl: 0,
         enableRecursiveFileSearch: true,
-        disableFuzzySearch: false,
+        enableFuzzySearch: true,
       });
       await fileSearch.initialize();
 
@@ -174,15 +177,57 @@ describe('useAtCompletion', () => {
     });
   });
 
+  describe('MCP resource suggestions', () => {
+    it('should include MCP resources in the suggestion list using fuzzy matching', async () => {
+      mockConfig.getResourceRegistry = vi.fn().mockReturnValue({
+        getAllResources: () => [
+          {
+            serverName: 'server-1',
+            uri: 'file:///tmp/server-1/logs.txt',
+            name: 'logs',
+            discoveredAt: Date.now(),
+          },
+        ],
+      });
+
+      const { result } = renderHook(() =>
+        useTestHarnessForAtCompletion(true, 'logs', mockConfig, '/tmp'),
+      );
+
+      await waitFor(() => {
+        expect(
+          result.current.suggestions.some(
+            (suggestion) =>
+              suggestion.value === 'server-1:file:///tmp/server-1/logs.txt',
+          ),
+        ).toBe(true);
+      });
+    });
+  });
+
   describe('UI State and Loading Behavior', () => {
     it('should be in a loading state during initial file system crawl', async () => {
       testRootDir = await createTmpDir({});
+
+      // Mock FileSearch to be slow to catch the loading state
+      const mockFileSearch = {
+        initialize: vi.fn().mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }),
+        search: vi.fn().mockResolvedValue([]),
+      };
+      vi.spyOn(FileSearchFactory, 'create').mockReturnValue(
+        mockFileSearch as unknown as FileSearch,
+      );
+
       const { result } = renderHook(() =>
         useTestHarnessForAtCompletion(true, '', mockConfig, testRootDir),
       );
 
       // It's initially true because the effect runs synchronously.
-      expect(result.current.isLoadingSuggestions).toBe(true);
+      await waitFor(() => {
+        expect(result.current.isLoadingSuggestions).toBe(true);
+      });
 
       // Wait for the loading to complete.
       await waitFor(() => {
@@ -231,7 +276,7 @@ describe('useAtCompletion', () => {
         cache: false,
         cacheTtl: 0,
         enableRecursiveFileSearch: true,
-        disableFuzzySearch: false,
+        enableFuzzySearch: true,
       });
       await realFileSearch.initialize();
 
@@ -513,7 +558,7 @@ describe('useAtCompletion', () => {
           respectGitIgnore: true,
           respectGeminiIgnore: true,
         })),
-        getFileFilteringDisableFuzzySearch: () => false,
+        getFileFilteringEnableFuzzySearch: () => true,
       } as unknown as Config;
 
       const { result } = renderHook(() =>

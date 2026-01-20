@@ -12,7 +12,7 @@ import type {
 } from './types.js';
 import { UserTierId } from './types.js';
 import { CodeAssistServer } from './server.js';
-import type { OAuth2Client } from 'google-auth-library';
+import type { AuthClient } from 'google-auth-library';
 
 export class ProjectIdRequiredError extends Error {
   constructor() {
@@ -32,7 +32,7 @@ export interface UserData {
  * @param projectId the user's project id, if any
  * @returns the user's actual project id
  */
-export async function setupUser(client: OAuth2Client): Promise<UserData> {
+export async function setupUser(client: AuthClient): Promise<UserData> {
   const projectId =
     process.env['GOOGLE_CLOUD_PROJECT'] ||
     process.env['GOOGLE_CLOUD_PROJECT_ID'] ||
@@ -89,11 +89,13 @@ export async function setupUser(client: OAuth2Client): Promise<UserData> {
     };
   }
 
-  // Poll onboardUser until long running operation is complete.
   let lroRes = await caServer.onboardUser(onboardReq);
-  while (!lroRes.done) {
-    await new Promise((f) => setTimeout(f, 5000));
-    lroRes = await caServer.onboardUser(onboardReq);
+  if (!lroRes.done && lroRes.name) {
+    const operationName = lroRes.name;
+    while (!lroRes.done) {
+      await new Promise((f) => setTimeout(f, 5000));
+      lroRes = await caServer.getOperation(operationName);
+    }
   }
 
   if (!lroRes.response?.cloudaicompanionProject?.id) {
